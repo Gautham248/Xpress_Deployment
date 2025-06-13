@@ -1,31 +1,25 @@
-# Base image for final container
+# Base image for running the app
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
-EXPOSE 80
+EXPOSE 8080
 
-# Build the app
+# SDK image for building the app
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
 # Copy and restore
-COPY ["Xpress_backend_V2/Xpress_backend_V2.csproj", "Xpress_backend_V2/"]
-RUN dotnet restore "Xpress_backend_V2/Xpress_backend_V2.csproj"
+COPY ["Xpress_backend_V2.csproj", "./"]
+RUN dotnet restore "./Xpress_backend_V2.csproj"
 
 # Copy everything else and build
 COPY . .
-WORKDIR "/src/Xpress_backend_V2"
-RUN dotnet build "Xpress_backend_V2.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "Xpress_backend_V2.csproj" -c Release -o /app/build
 
-# Publish the app
-FROM build AS publish
-ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "Xpress_backend_V2.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+# Publish the build
+RUN dotnet publish "Xpress_backend_V2.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-# Final runtime image
+# Final image
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
-
-# ENTRYPOINT to run your app
+COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "Xpress_backend_V2.dll"]
