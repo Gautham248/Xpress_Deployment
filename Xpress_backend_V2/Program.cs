@@ -1,57 +1,50 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using Xpress_backend_V2.Data;
 using Xpress_backend_V2.Interface;
 using Xpress_backend_V2.Repositories;
-
-//using Xpress_backend_V2.Repositories;
 using Xpress_backend_V2.Models.Configuration;
 using Xpress_backend_V2.Repository;
 using Xpress_backend_V2.Services;
 using Xpress_backend_V2.Services.Interface;
 
-
 var builder = WebApplication.CreateBuilder(args);
 
-
+// Load settings
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("EmailSettings"));
 builder.Services.Configure<ApplicationSettings>(builder.Configuration.GetSection("ApplicationSettings"));
 
-// Add services to the container.
+// Add controllers
 builder.Services.AddControllers();
 
-// Register DbContext
-builder.Services.AddDbContext<ApiDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+// === DATABASE CONNECTION (Cloud + Local fallback) ===
+var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
 
-// Register services
+builder.Services.AddDbContext<ApiDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+// ===  Dependency Injection for Services ===
 builder.Services.AddScoped<ITravelRequestServices, TravelRequestRepository>();
 builder.Services.AddScoped<ITicketOptionServices, TicketOptionRepository>();
 builder.Services.AddScoped<IUserServices, UserRepository>();
 builder.Services.AddScoped<IRMTServices, RMTRepository>();
 builder.Services.AddScoped<ITravelModeServices, TravelModeRepository>();
-
 builder.Services.AddScoped<IAirlineReportRepository, AirlineReportRepository>();
-
 builder.Services.AddScoped<IRequestStatusServices, RequestStatusRepository>();
 builder.Services.AddScoped<IUserNotificationServices, UserNotificationRepository>();
 builder.Services.AddScoped<IAuditLogServices, AuditLogRepository>();
-//builder.Services.AddScoped<IAadharDocServices, AadharDocRepository>();
-//builder.Services.AddScoped<IPassportDocServices, PassportDocRepository>();
-//builder.Services.AddScoped<IVisaDocServices, VisaDocRepository>();
 builder.Services.AddScoped<IProjectRoleService, ProjectRoleService>();
-builder.Services.AddScoped<ICalendarTravelRequestRepository,CalendarTravelRequestRepository>();
+builder.Services.AddScoped<ICalendarTravelRequestRepository, CalendarTravelRequestRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITravelRequestStatsRepository, TravelRequestStatsRepository>();
 builder.Services.AddScoped<IDocumentService, DocumentRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
-
 builder.Services.AddScoped<IAuditLogHandlerService, AuditLogHandlerService>();
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
 builder.Services.AddScoped<IProcessingTimeRepository, ProcessingTimeRepository>();
@@ -60,27 +53,9 @@ builder.Services.AddScoped<ITravelAgencyStatRepository, TravelAgencyStatReposito
 builder.Services.AddScoped<ITravelRequestRepo, TravelRequestRepo>();
 
 builder.Services.AddAutoMapper(typeof(Program));
+builder.Services.AddHttpClient();
 
-// For CORS error resolve
-//builder.Services.AddCors(options =>
-//{
-//    options.AddPolicy("AllowReactApp",
-//        policy =>
-//        {
-//            policy.WithOrigins("http://localhost:5030", "http://localhost:5173") // Add React app ports
-//                  .AllowAnyHeader()
-//                  .AllowAnyMethod();
-//        });
-//});
-
-// Register the RmtDataSyncService as a hosted service
-//builder.Services.AddHostedService<RmtDataSyncService>();
-
-builder.Services.AddScoped<IDocumentService, DocumentRepository>();
-builder.Services.AddAutoMapper(typeof(Program)); // If using AutoMapper
-
-
-// Add CORS policy to allow all frontends
+// === CORS POLICY ===
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", builder =>
@@ -91,71 +66,68 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configure Swagger/OpenAPI
-builder.Services.AddEndpointsApiExplorer();
-//builder.Services.AddSwaggerGen();
-
-builder.Services.AddSwaggerGen(option =>
+// === JWT Authentication ===
+var jwtKey = builder.Configuration["JWT:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey))
 {
-    option.SwaggerDoc("v1", new OpenApiInfo { Title = "JWTWebApplication", Version = "v1" });
-    //option.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    //{
-    //    In = ParameterLocation.Header,
-    //    Description = "Please enter a valid token",
-    //    Name = "Authorization",
-    //    Type = SecuritySchemeType.Http,
-    //    BearerFormat = "JWT",
-    //    Scheme = "Bearer"
-    //});
-    option.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type=ReferenceType.SecurityScheme,
-                    Id="Bearer"
-                }
-            },
-            new string[]{}
-        }
-    });
-});
-//Jwt 
-builder.Services.AddAuthentication(options => {
+    jwtKey = Environment.GetEnvironmentVariable("JWT_KEY") ?? throw new Exception("JWT Key not configured.");
+}
+
+builder.Services.AddAuthentication(options =>
+{
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
     options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-}).AddJwtBearer(options =>
+})
+.AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = false,
         ValidateAudience = false,
         ValidateLifetime = false,
-        ValidateIssuerSigningKey = false,
-        ValidIssuer = builder.Configuration["JWT:Issuer"],
-        ValidAudience = builder.Configuration["JWT:Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["JWT:Key"]))
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
     };
 });
 
-builder.Services.AddHttpClient();
+// === Swagger ===
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(option =>
+{
+    option.SwaggerDoc("v1", new OpenApiInfo { Title = "Xpress API", Version = "v1" });
+    option.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        In = ParameterLocation.Header,
+        Description = "Enter JWT token with Bearer prefix",
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        BearerFormat = "JWT",
+        Scheme = "Bearer"
+    });
+    option.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
+// === Build and Run ===
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-app.UseHttpsRedirection();
 
-
-
-// Apply CORS policy
+// DO NOT use HTTPS redirection on Render (already HTTPS)
 app.UseCors("AllowAll");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
